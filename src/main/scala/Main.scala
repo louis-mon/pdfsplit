@@ -1,8 +1,10 @@
 import java.io.{ByteArrayOutputStream, File}
+import java.nio.file.{Files, Path, Paths}
 
 import javax.swing.JOptionPane
 import org.apache.pdfbox.cos.COSObject
 import org.apache.pdfbox.io.MemoryUsageSetting
+import org.apache.pdfbox.multipdf.PDFMergerUtility
 import org.apache.pdfbox.pdmodel.common.PDRectangle
 import org.apache.pdfbox.pdmodel.graphics.PDXObject
 import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject
@@ -14,6 +16,7 @@ import scala.swing.{Action, BoxPanel, Button, Dimension, FileChooser, FlowPanel,
 import scala.util.{Failure, Success, Try}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+import scala.io.Source
 
 object PdfSplit {
   def execute(file: File, getStartPage: => String, getEndPage: => String,
@@ -21,47 +24,57 @@ object PdfSplit {
               notifier: (Int, Int) => Unit = (_, _) => ()): Unit = {
     val pdf = PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly())
     val renderer = new PDFRenderer(pdf)
-    val newDoc = new PDDocument()
-    newDoc.setResourceCache(new DefaultResourceCache {
-      override def put( indirect: COSObject,  xobject: PDXObject) {
-
-      }
-    })
     val nbTotalPages = pdf.getNumberOfPages
     val dpi = Try(getDpi).map(_.toInt).getOrElse(150)
     val startPage = Try(getStartPage).map(_.toInt - 1).getOrElse(0)
     val endPage = Try(getEndPage).map(_.toInt - 1).getOrElse(nbTotalPages - 1)
-    0.until(nbTotalPages).foreach(currentPageIndex => {
-      val currentPageNumber = currentPageIndex + 1
-      println(s"convert page $currentPageNumber")
-      notifier(currentPageNumber, nbTotalPages)
-      val nbParts = if (currentPageIndex >= startPage && currentPageIndex <= endPage) 0.to(1) else List(0)
-      nbParts.foreach(part => {
-        val outStream = new ByteArrayOutputStream()
-        val sourceImage = renderer.renderImageWithDPI(currentPageIndex, dpi)
-        val w = sourceImage.getWidth() / nbParts.size
-        val h = sourceImage.getHeight()
-        ImageIOUtil.writeImage(sourceImage.getSubimage(w * part, 0, w, h), "png", outStream)
+    val blockSize = 40
+    val tmpDir = Paths.get("parts")
+    Try(Files.createDirectory(tmpDir))
+    val blocks = 0.until(nbTotalPages).sliding(blockSize, blockSize)
+    val filenames = collection.mutable.ArrayBuffer[File]()
+    blocks.zipWithIndex.foreach{ case (block, i) =>
+      val newDoc = new PDDocument()
+      println(s"convert block $i")
+      block.foreach(currentPageIndex => {
+        val currentPageNumber = currentPageIndex + 1
+        println(s"convert page $currentPageNumber")
+        notifier(currentPageNumber, nbTotalPages)
+        val nbParts = if (currentPageIndex >= startPage && currentPageIndex <= endPage) 0.to(1) else List(0)
+        nbParts.foreach(part => {
+          val outStream = new ByteArrayOutputStream()
+          val sourceImage = renderer.renderImageWithDPI(currentPageIndex, dpi)
+          val w = sourceImage.getWidth() / nbParts.size
+          val h = sourceImage.getHeight()
+          ImageIOUtil.writeImage(sourceImage.getSubimage(w * part, 0, w, h), "png", outStream)
 
-        val scale = 72.0 / dpi
-        val outW = (w * scale).toInt
-        val outH = (h * scale).toInt
-        val newPage = new PDPage(new PDRectangle(outW, outH))
-        newDoc.addPage(newPage)
-        val stream = new PDPageContentStream(newDoc, newPage)
-        val image = PDImageXObject.createFromByteArray(newDoc, outStream.toByteArray, "doc")
-        stream.drawImage(image, 0, 0, outW, outH)
-        outStream.close()
-        stream.close()
+          val scale = 72.0 / dpi
+          val outW = (w * scale).toInt
+          val outH = (h * scale).toInt
+          val newPage = new PDPage(new PDRectangle(outW, outH))
+          newDoc.addPage(newPage)
+          val stream = new PDPageContentStream(newDoc, newPage)
+          val image = PDImageXObject.createFromByteArray(newDoc, outStream.toByteArray, "doc")
+          stream.drawImage(image, 0, 0, outW, outH)
+          outStream.close()
+          stream.close()
+        })
       })
-    })
-    newDoc.save("result.pdf")
+      val filename = tmpDir.resolve(s"part-$i.pdf").toFile
+      newDoc.save(filename)
+      newDoc.close()
+      filenames += filename
+    }
+    val merger = new PDFMergerUtility()
+    merger.setDestinationFileName("result.pdf")
+    filenames.foreach(filename => merger.addSource(filename))
+    merger.mergeDocuments(MemoryUsageSetting.setupTempFileOnly())
     pdf.close()
   }
 }
 
 object Main extends App {
-  PdfSplit.execute(new File(args(0)), args(1), args(2))
+  PdfSplit.execute(new File(args(0)), args(1), args(2), args(3))
 }
 
 object MainApp extends SimpleSwingApplication {
