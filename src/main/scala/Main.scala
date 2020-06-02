@@ -12,7 +12,7 @@ import org.apache.pdfbox.pdmodel.{DefaultResourceCache, PDDocument, PDPage, PDPa
 import org.apache.pdfbox.rendering.PDFRenderer
 import org.apache.pdfbox.tools.imageio.ImageIOUtil
 
-import scala.swing.{Action, BoxPanel, Button, Dimension, FileChooser, FlowPanel, FormattedTextField, Frame, Label, MainFrame, Orientation, Panel, ProgressBar, SimpleSwingApplication, Swing, TextField}
+import scala.swing.{Action, BoxPanel, Button, CheckBox, Dimension, FileChooser, FlowPanel, FormattedTextField, Frame, Label, MainFrame, Orientation, Panel, ProgressBar, SimpleSwingApplication, Swing, TextField}
 import scala.util.{Failure, Success, Try}
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
@@ -21,6 +21,7 @@ import scala.io.Source
 object PdfSplit {
   def execute(file: File, getStartPage: => String, getEndPage: => String,
               getDpi: => String = "",
+              invertPages: Boolean = false,
               notifier: (Int, Int) => Unit = (_, _) => ()): Unit = {
     val pdf = PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly())
     val renderer = new PDFRenderer(pdf)
@@ -33,7 +34,7 @@ object PdfSplit {
     Try(Files.createDirectory(tmpDir))
     val blocks = 0.until(nbTotalPages).sliding(blockSize, blockSize)
     val filenames = collection.mutable.ArrayBuffer[File]()
-    blocks.zipWithIndex.foreach{ case (block, i) =>
+    blocks.zipWithIndex.foreach { case (block, i) =>
       val newDoc = new PDDocument()
       println(s"convert block $i")
       block.foreach(currentPageIndex => {
@@ -41,7 +42,8 @@ object PdfSplit {
         println(s"convert page $currentPageNumber")
         notifier(currentPageNumber, nbTotalPages)
         val nbParts = if (currentPageIndex >= startPage && currentPageIndex <= endPage) 0.to(1) else List(0)
-        nbParts.foreach(part => {
+        val parts = if (invertPages) nbParts.reverse else nbParts
+        parts.foreach(part => {
           val outStream = new ByteArrayOutputStream()
           val sourceImage = renderer.renderImageWithDPI(currentPageIndex, dpi)
           val w = sourceImage.getWidth() / nbParts.size
@@ -74,7 +76,7 @@ object PdfSplit {
 }
 
 object Main extends App {
-  PdfSplit.execute(new File(args(0)), args(1), args(2), args(3))
+  PdfSplit.execute(file = new File(args(0)), getStartPage = args(1), getEndPage = args(2), getDpi = args(3))
 }
 
 object MainApp extends SimpleSwingApplication {
@@ -91,6 +93,8 @@ object MainApp extends SimpleSwingApplication {
     private val startPageInput = numberInput
     private val endPageInput = numberInput
     private val dpiInput = numberInput
+
+    private val invertInput = new CheckBox("Invert")
 
     private val fileLabel = new Label() {
       text = "Pas de fichier selectionné"
@@ -114,6 +118,8 @@ object MainApp extends SimpleSwingApplication {
       contents += new FlowPanel(new Label("Page de fin"), endPageInput)
       contents += Swing.VStrut(3)
       contents += new FlowPanel(new Label("Résolution"), dpiInput)
+      contents += Swing.VStrut(3)
+      contents += new FlowPanel(new Label("Inverser pages"), invertInput)
       contents += Swing.VStrut(10)
       contents += new FlowPanel(new Button {
         action = Action("Lancer la conversion") {
@@ -123,6 +129,7 @@ object MainApp extends SimpleSwingApplication {
               getStartPage = startPageInput.text,
               getEndPage = endPageInput.text,
               getDpi = dpiInput.text,
+              invertPages = invertInput.selected,
               notifier = (current, total) => {
                 progressBar.max = total
                 progressBar.value = current
