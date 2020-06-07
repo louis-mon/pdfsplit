@@ -30,7 +30,7 @@ object PdfSplit {
     val startPage = Try(getStartPage).map(_.toInt - 1).getOrElse(0)
     val endPage = Try(getEndPage).map(_.toInt - 1).getOrElse(nbTotalPages - 1)
     val blockSize = 40
-    val tmpDir = Paths.get("parts")
+    val tmpDir = Paths.get(s"${file.getName}-parts")
     Try(Files.createDirectory(tmpDir))
     val blocks = 0.until(nbTotalPages).sliding(blockSize, blockSize)
     val filenames = collection.mutable.ArrayBuffer[File]()
@@ -67,8 +67,10 @@ object PdfSplit {
       newDoc.close()
       filenames += filename
     }
+    println("merge pdfs")
     val merger = new PDFMergerUtility()
-    merger.setDestinationFileName("result.pdf")
+    merger.setDestinationFileName(s"$tmpDir/result.pdf")
+    println("done")
     filenames.foreach(filename => merger.addSource(filename))
     merger.mergeDocuments(MemoryUsageSetting.setupTempFileOnly())
     pdf.close()
@@ -94,7 +96,7 @@ object MainApp extends SimpleSwingApplication {
     private val endPageInput = numberInput
     private val dpiInput = numberInput
 
-    private val invertInput = new CheckBox("Invert")
+    private val invertInput = new CheckBox()
 
     private val fileLabel = new Label() {
       text = "Pas de fichier selectionné"
@@ -119,7 +121,7 @@ object MainApp extends SimpleSwingApplication {
       contents += Swing.VStrut(3)
       contents += new FlowPanel(new Label("Résolution"), dpiInput)
       contents += Swing.VStrut(3)
-      contents += new FlowPanel(new Label("Inverser pages"), invertInput)
+      contents += new FlowPanel(new Label("Lecture japonaise"), invertInput)
       contents += Swing.VStrut(10)
       contents += new FlowPanel(new Button {
         action = Action("Lancer la conversion") {
